@@ -623,7 +623,12 @@ class Session:
     def openai(self):
         if self._openai is None:
             from openai import OpenAI
-            self._openai = OpenAI()
+            if not config.OPENAI_API_KEY:
+                raise RuntimeError(
+                    "OPENAI_API_KEY is not set. Add it to .env (or to Vercel's "
+                    "Environment Variables and redeploy)."
+                )
+            self._openai = OpenAI(api_key=config.OPENAI_API_KEY)
         return self._openai
 
     def reset(self):
@@ -714,6 +719,29 @@ class Session:
     def _remember(self, turn):
         self.turns.append(turn)
         self.turns = self.turns[-self.max_turns:]
+
+
+def explain_error(error):
+    """Turn library errors into a message staff can act on."""
+    name = type(error).__name__
+    cause = error.__cause__ or error.__context__
+    if name == "APIConnectionError":
+        detail = f" ({type(cause).__name__}: {cause})" if cause else ""
+        if cause and "header" in str(cause).lower():
+            return ("Could not contact OpenAI: the OPENAI_API_KEY value contains a space "
+                    "or line break. Re-enter it without extra characters and redeploy.")
+        return ("Could not contact OpenAI. Check the internet connection and that "
+                f"OPENAI_API_KEY is correct{detail}.")
+    if name == "AuthenticationError":
+        return "OpenAI rejected the API key. Check OPENAI_API_KEY (it may be wrong or revoked)."
+    if name == "RateLimitError":
+        return ("OpenAI says the limit or credit is used up. Check billing and usage "
+                "at platform.openai.com, then try again.")
+    if name == "NotFoundError" and "model" in str(error).lower():
+        return f"OpenAI does not recognise the model '{config.OPENAI_MODEL}'. Check OPENAI_MODEL."
+    if name == "APITimeoutError":
+        return "OpenAI took too long to answer. Please try again."
+    return str(error) or name
 
 
 def build_tools():

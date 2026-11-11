@@ -13,7 +13,7 @@ from pathlib import Path
 
 import config
 import reports
-from assistant import Session, build_tools
+from assistant import Session, build_tools, explain_error
 
 HELP = """
 Ask anything in plain English, e.g.
@@ -132,7 +132,7 @@ def main():
 
             show(session.ask(question))
         except Exception as error:
-            print("\nRequest failed:", error)
+            print("\nRequest failed:", explain_error(error))
 
 
 if __name__ == "__main__":

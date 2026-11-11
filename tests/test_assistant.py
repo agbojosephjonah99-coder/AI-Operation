@@ -405,3 +405,35 @@ def test_vercel_entrypoint_imports(monkeypatch):
     monkeypatch.setattr("assistant.build_tools", lambda: None)
     module = importlib.import_module("app")
     assert module.app.name == "web"
+
+
+def test_connection_errors_are_explained(monkeypatch):
+    import config
+    from assistant import Session, explain_error
+    from openai import OpenAI
+    monkeypatch.setattr(config, "OPENAI_API_KEY", None)
+    with pytest.raises(RuntimeError, match="OPENAI_API_KEY is not set"):
+        Session(Tools(make_client()[0])).openai
+    # A key with a trailing line break fails before any network request.
+    import http.server
+    import threading
+    server = http.server.HTTPServer(("127.0.0.1", 0), http.server.BaseHTTPRequestHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        bad = OpenAI(api_key="sk-test\n", max_retries=0,
+                     base_url=f"http://127.0.0.1:{server.server_port}/v1")
+        with pytest.raises(Exception) as caught:
+            bad.responses.create(model="x", input="hi")
+        assert "space or line break" in explain_error(caught.value)
+    finally:
+        server.shutdown()
+
+
+def test_env_key_is_stripped(monkeypatch):
+    import importlib
+    import config
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-abc\n")
+    importlib.reload(config)
+    assert config.OPENAI_API_KEY == "sk-abc"
+    monkeypatch.undo()
+    importlib.reload(config)

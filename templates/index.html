@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#f6f5f1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <title>AI Operations Assistant</title>
 <style>
   :root {
@@ -12,7 +15,10 @@
     font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink); height: 100vh; display: flex; font-size: 15px; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); height: 100vh; height: 100dvh; display: flex;
+         font-size: 15px; overflow: hidden; -webkit-text-size-adjust: 100%; }
+  .topbar, .backdrop, .icon-btn.close-drawer { display: none; }
   aside { width: 270px; flex-shrink: 0; border-right: 1px solid var(--line); background: #efede7;
           padding: 20px 16px; display: flex; flex-direction: column; gap: 18px; overflow-y: auto; }
   .brand { font-weight: 700; font-size: 17px; letter-spacing: -.01em; }
@@ -81,15 +87,84 @@
   #send { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 0 18px; font-weight: 600; }
   #send:disabled { opacity: .5; cursor: default; }
   .hint { max-width: 980px; margin: 6px auto 0; font-size: 12px; color: var(--muted); }
+  .icon-btn { background: transparent; border: 0; width: 40px; height: 40px; border-radius: 10px;
+              display: inline-grid; place-items: center; color: var(--ink); padding: 0; }
+  .icon-btn:hover, .icon-btn:active { background: #e4e1d8; }
+  .icon-btn svg { width: 22px; height: 22px; }
+  #send svg { display: none; width: 20px; height: 20px; }
+
+  /* ---------- Phones and small tablets ---------- */
   @media (max-width: 800px) {
-    body { flex-direction: column; } aside { width: 100%; max-height: 40vh; }
-    #log, form#composer { padding-left: 14px; padding-right: 14px; } .examples { grid-template-columns: 1fr; }
+    body { flex-direction: column; font-size: 16px; }
+    .topbar { display: flex; align-items: center; gap: 4px; flex-shrink: 0;
+              padding: calc(6px + env(safe-area-inset-top)) 8px 6px; background: var(--bg);
+              border-bottom: 1px solid var(--line); }
+    .topbar-title { flex: 1; text-align: center; font-weight: 650; font-size: 16px;
+                    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Sidebar becomes a slide-out drawer */
+    aside { position: fixed; top: 0; bottom: 0; left: 0; z-index: 30; width: min(86vw, 320px);
+            padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+            transform: translateX(-100%); transition: transform .25s ease; box-shadow: none; }
+    body.drawer-open aside { transform: translateX(0); box-shadow: 0 0 40px rgba(0,0,0,.18); }
+    .backdrop { display: block; position: fixed; inset: 0; z-index: 20; background: rgba(20,24,22,.35);
+                opacity: 0; pointer-events: none; transition: opacity .25s ease; }
+    body.drawer-open .backdrop { opacity: 1; pointer-events: auto; }
+    .drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .icon-btn.close-drawer { display: inline-grid; }
+    .side-btn { padding: 11px 10px; }
+    .field-check input { font-size: 16px; padding: 10px; }
+
+    main { flex: 1; min-height: 0; }
+    #log { padding: 16px 14px 8px; -webkit-overflow-scrolling: touch; }
+    .msg.user .bubble { max-width: 85%; }
+    .welcome { margin-top: 4vh; }
+    .welcome h1 { font-size: 22px; }
+    .welcome p { font-size: 15px; margin-bottom: 18px; }
+    .examples { grid-template-columns: 1fr; gap: 8px; }
+    .examples button { padding: 12px; font-size: 15px; }
+
+    /* Result cards */
+    .card { border-radius: 12px; }
+    .card-head, .summary, .section { padding-left: 12px; padding-right: 12px; }
+    .summary { gap: 4px 14px; font-size: 13px; }
+    .tools { margin-left: 0; width: 100%; }
+    .tools input { flex: 1; width: auto; min-width: 0; font-size: 16px; padding: 7px 9px; }
+    .tools a { padding: 7px 10px; white-space: nowrap; }
+    .table-wrap { max-height: 60vh; }
+    table { font-size: 13px; }
+    th, td { padding: 7px 9px; white-space: nowrap; }
+    td { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Composer pinned to the bottom, like a chat app */
+    form#composer { padding: 8px 10px calc(10px + env(safe-area-inset-bottom)); background: var(--bg);
+                    border-top: 1px solid var(--line); }
+    .composer-box { border-radius: 22px; padding: 5px 5px 5px 12px; align-items: flex-end; }
+    textarea { font-size: 16px; padding: 8px 4px; max-height: 120px; }  /* 16px stops iOS zooming */
+    #send { width: 40px; height: 40px; border-radius: 50%; padding: 0; display: grid; place-items: center; flex-shrink: 0; }
+    #send span { display: none; } #send svg { display: block; }
+    .hint { display: none; }
   }
 </style>
 </head>
 <body>
-<aside>
-  <div class="brand">AI Operations Assistant<small>SPPG Airtable · read-only</small></div>
+<header class="topbar">
+  <button class="icon-btn" id="open-drawer" aria-label="Open menu">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+  </button>
+  <div class="topbar-title">AI Operations Assistant</div>
+  <button class="icon-btn" id="new-chat-top" aria-label="New conversation">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+  </button>
+</header>
+<div class="backdrop" id="backdrop"></div>
+<aside id="drawer">
+  <div class="drawer-head">
+    <div class="brand">AI Operations Assistant<small>SPPG Airtable · read-only</small></div>
+    <button class="icon-btn close-drawer" id="close-drawer" aria-label="Close menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
   <button class="primary-btn" id="new-chat">+ New conversation</button>
 
   <div>
@@ -110,7 +185,7 @@
   </div>
 
   <div class="privacy">
-    <strong>Privacy:</strong> student records stay on this computer. The AI receives your questions,
+    <strong>Privacy:</strong> student records are shown only to you. The AI receives your questions,
     field names, counts and shared category values (e.g. Paid / Not Paid), never
     names, matric numbers or other personal details.
     Reports run without the AI.
@@ -133,8 +208,10 @@
 
   <form id="composer">
     <div class="composer-box">
-      <textarea id="input" rows="1" placeholder="Ask a question… (follow-ups remember the conversation)"></textarea>
-      <button id="send" type="submit">Send</button>
+      <textarea id="input" rows="1" enterkeyhint="send" placeholder="Ask a question…"></textarea>
+      <button id="send" type="submit" aria-label="Send"><span>Send</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+      </button>
     </div>
     <div class="hint">Enter to send · Shift+Enter for a new line</div>
   </form>
@@ -148,6 +225,7 @@ const sendBtn = document.getElementById("send");
 let busy = false;
 // The conversation memory (signed by the server). Kept only in this page.
 let convState = null;
+const touch = window.matchMedia("(pointer: coarse)").matches;
 
 function el(tag, cls, text) {
   const node = document.createElement(tag);
@@ -299,7 +377,10 @@ async function run(userText, url, body) {
     fill(msg, data);
   }
   catch (e) { fill(msg, {error: "Could not reach the assistant. Is web.py still running?"}); }
-  busy = false; sendBtn.disabled = false; scrollDown(); input.focus();
+  busy = false; sendBtn.disabled = false;
+  // Show the start of the answer (long tables would otherwise push it off screen).
+  msg.scrollIntoView({block: "start", behavior: "smooth"});
+  if (!touch) input.focus();
 }
 
 document.getElementById("composer").addEventListener("submit", e => {
@@ -308,34 +389,47 @@ document.getElementById("composer").addEventListener("submit", e => {
   input.value = ""; input.style.height = "auto";
   run(text, "/api/chat", {message: text});
 });
+// On phones the Return key adds a new line and the arrow button sends (like Claude);
+// on computers Enter sends and Shift+Enter adds a new line.
 input.addEventListener("keydown", e => {
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); document.getElementById("composer").requestSubmit(); }
+  if (e.key === "Enter" && !e.shiftKey && !touch && !e.isComposing) {
+    e.preventDefault(); document.getElementById("composer").requestSubmit();
+  }
 });
+
+// Slide-out menu on small screens
+const openDrawer = () => document.body.classList.add("drawer-open");
+const closeDrawer = () => document.body.classList.remove("drawer-open");
+document.getElementById("open-drawer").addEventListener("click", openDrawer);
+document.getElementById("close-drawer").addEventListener("click", closeDrawer);
+document.getElementById("backdrop").addEventListener("click", closeDrawer);
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
 input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; });
 
 document.querySelectorAll(".examples button").forEach(b =>
   b.addEventListener("click", () => { input.value = b.textContent; document.getElementById("composer").requestSubmit(); }));
 
 document.querySelectorAll("[data-report]").forEach(b =>
-  b.addEventListener("click", () => run(`Report: ${b.textContent}`, "/api/report", {name: b.dataset.report})));
+  b.addEventListener("click", () => { closeDrawer(); run(`Report: ${b.textContent}`, "/api/report", {name: b.dataset.report}); }));
 
 function missingField() {
   const field = document.getElementById("missing-field").value.trim(); if (!field) return;
+  closeDrawer();
   run(`Report: Missing ${field}`, "/api/report", {name: "missing", field});
 }
 document.getElementById("missing-go").addEventListener("click", missingField);
 document.getElementById("missing-field").addEventListener("keydown", e => { if (e.key === "Enter") missingField(); });
 
-document.getElementById("new-chat").addEventListener("click", () => {
-  convState = null; location.reload();
-});
+const newChat = () => { convState = null; location.reload(); };
+document.getElementById("new-chat").addEventListener("click", newChat);
+document.getElementById("new-chat-top").addEventListener("click", newChat);
 document.getElementById("refresh").addEventListener("click", async e => {
   const b = e.currentTarget; const old = b.textContent; b.textContent = "Refreshing…";
   const r = await post("/api/refresh");
   b.textContent = r.error ? "Refresh failed" : "✓ Fresh data on next question";
   setTimeout(() => b.textContent = old, 2500);
 });
-input.focus();
+if (!touch) input.focus();   // don't pop the keyboard up on phones
 </script>
 </body>
 </html>

@@ -28,7 +28,7 @@ from flask import Flask, jsonify, redirect, render_template, request, session, u
 
 import config
 import reports
-from assistant import Session, build_tools
+from assistant import Session, build_tools, explain_error
 
 MAX_STATE_BYTES = 400_000
 
@@ -89,7 +89,10 @@ def create_app(tools=None, openai_client=None):
         return jsonify({**reply.to_dict(), "state": make_token(state_key, chat.export_state())})
 
     def fail(error, status=500):
-        return jsonify({"error": str(error)}), status
+        message = explain_error(error) if isinstance(error, Exception) else str(error)
+        if isinstance(error, Exception):
+            app.logger.exception("Request failed")   # full details in Vercel's logs
+        return jsonify({"error": message}), status
 
     @app.before_request
     def guard():

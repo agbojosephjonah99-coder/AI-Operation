@@ -35,6 +35,9 @@ def _int(name, default):
 AIRTABLE_TOKEN = _env("Airtable_Personal_Access_Token", "AIRTABLE_TOKEN")
 AIRTABLE_BASE_ID = _env("Airtable_Base_ID", "AIRTABLE_BASE_ID")
 OPENAI_MODEL = _env("OPENAI_MODEL", default="gpt-4.1-mini")
+# Stripped, because a space or line break pasted after the key makes every
+# OpenAI request fail with a misleading "Connection error."
+OPENAI_API_KEY = _env("OPENAI_API_KEY")
 
 # --- Speed ---------------------------------------------------------------
 # How long downloaded records are reused before Airtable is asked again.
