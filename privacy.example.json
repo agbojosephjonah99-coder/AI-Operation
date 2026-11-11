@@ -1,0 +1,19 @@
+{
+  "_help": [
+    "model   = totals per value may be sent to the AI (harmless categories only)",
+    "user    = shown to you only, never sent to the AI (default)",
+    "blocked = never downloaded from Airtable",
+    "Run 'python setup_privacy.py' to generate privacy.json with every field in your base."
+  ],
+  "tables": {
+    "Student Profile/Biodata": {
+      "Name": "user",
+      "Matric_Number": "user",
+      "Level": "model",
+      "Passport": "user",
+      "Missing Fields": "user",
+      "Phone": "user",
+      "Bank Account Number": "blocked"
+    }
+  }
+}

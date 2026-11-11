@@ -1,0 +1,10 @@
+# Never upload secrets or local files to Vercel
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.pyc
+exports/
+.pytest_cache/
+tests/

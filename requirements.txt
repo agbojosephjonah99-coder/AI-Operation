@@ -1,0 +1,5 @@
+openai>=1.66
+requests>=2.31
+python-dotenv>=1.0
+flask>=3.0
+waitress>=3.0
