@@ -124,3 +124,119 @@ def group_counts(rows, field):
         else:
             counter[value] += 1
     return dict(counter.most_common())
+
+
+# ---------------------------------------------------------------------------
+# "Similar" matching for names, matric numbers and other short text
+# ---------------------------------------------------------------------------
+
+import re as _re
+from difflib import SequenceMatcher
+from functools import lru_cache
+
+SIMILAR_THRESHOLD = 0.78     # 0..1; lower finds more (and looser) matches
+_SIMILAR_MAX_LENGTH = 120    # long text (notes, addresses) is not fuzzy-matched
+
+
+def normalize_text(text):
+    """Lower-case, punctuation to spaces, single spaces: 'Okafor,  John' -> 'okafor john'."""
+    return " ".join(_re.sub(r"[^\w]+", " ", str(text).lower()).split())
+
+
+def _ratio(a, b):
+    return SequenceMatcher(None, a, b).ratio()
+
+
+def _ratio_if(matcher, value, minimum):
+    """matcher.ratio() against value, or 0.0 if it cannot reach `minimum` (cheap checks first)."""
+    matcher.set_seq1(value)
+    if matcher.real_quick_ratio() < minimum or matcher.quick_ratio() < minimum:
+        return 0.0
+    score = matcher.ratio()
+    return score if score >= minimum else 0.0
+
+
+def _one_slip(a, b):
+    """True if a and b differ by one changed, missing, extra or swapped character."""
+    if a == b or abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) == len(b):
+        diff = [i for i in range(len(a)) if a[i] != b[i]]
+        if len(diff) == 1:
+            return True
+        return (len(diff) == 2 and diff[1] == diff[0] + 1
+                and a[diff[0]] == b[diff[1]] and a[diff[1]] == b[diff[0]])
+    short, long_ = (a, b) if len(a) < len(b) else (b, a)
+    return any(long_[:i] + long_[i + 1:] == short for i in range(len(long_)))
+
+
+class _Term:
+    """A search term prepared once, then compared against many values quickly."""
+
+    def __init__(self, term):
+        self.text = normalize_text(term)
+        self.words = self.text.split()
+        self.digits = "".join(ch for ch in self.text if ch.isdigit())
+        self.whole = SequenceMatcher(None, "", self.text, autojunk=False)
+        self.sorted = SequenceMatcher(None, "", " ".join(sorted(self.words)), autojunk=False)
+        self.word_matchers = [SequenceMatcher(None, "", w, autojunk=False) for w in self.words]
+        n = max(1, len(self.words))
+        # A single word scoring below this cannot lift the average over the threshold.
+        self.word_floor = max(0.0, n * SIMILAR_THRESHOLD - (n - 1) - 0.05)
+
+    def score(self, text):
+        a, b = self.text, normalize_text(text)
+        if not a or not b or len(b) > _SIMILAR_MAX_LENGTH:
+            return 0.0
+        if a == b:
+            return 1.0
+        # IDs such as matric numbers share most characters ("SPPG/0123" vs
+        # "SPPG/0456"), so compare their digits strictly instead.
+        if len(self.digits) >= 3:
+            b_digits = "".join(ch for ch in b if ch.isdigit())
+            if not b_digits:
+                return 0.0
+            if self.digits == b_digits:
+                return 0.95                     # same number, different formatting
+            if _one_slip(self.digits, b_digits):
+                # Swapped neighbours are the most common typing slip.
+                swapped = len(self.digits) == len(b_digits) and sorted(self.digits) == sorted(b_digits)
+                return 0.88 if swapped else 0.85
+            return 0.0
+        b_words = b.split()
+        # Single short words (e.g. "Ade") only count on an exact word match.
+        if len(self.words) == 1 and len(a) < 4:
+            return 0.95 if a in b_words else 0.0
+        t = SIMILAR_THRESHOLD
+        whole = _ratio_if(self.whole, b, t)
+        reordered = _ratio_if(self.sorted, " ".join(sorted(b_words)), t)
+        # Every word of the search should closely match some word of the value.
+        total = 0.0
+        for matcher in self.word_matchers:
+            best = 0.0
+            for word in b_words:
+                best = max(best, _ratio_if(matcher, word, max(self.word_floor, best)))
+                if best == 1.0:
+                    break
+            total += best
+        per_word = total / len(self.words)
+        # Small penalty when the value has many more words than the search.
+        per_word *= 1 - min(0.15, 0.05 * max(0, len(b_words) - len(self.words)))
+        return round(max(whole, reordered, per_word), 3)
+
+
+@lru_cache(maxsize=64)
+def _prepared(term):
+    return _Term(term)
+
+
+def similarity(term, text):
+    """
+    How alike a search term and a value are, from 0 to 1. Handles:
+      typos              'Chukwuma' ~ 'Chukwumah'
+      word order         'John Okafor' ~ 'Okafor John'
+      extra/missing name 'John Okafor' ~ 'John Chidi Okafor'
+      ID slips           'SPPG/0123' ~ 'SPPG/0132'
+    Scores below SIMILAR_THRESHOLD may be returned as 0 (they are not similar).
+    """
+    return _prepared(str(term)).score(text)

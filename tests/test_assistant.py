@@ -256,6 +256,55 @@ def test_finds_payment_info_in_another_table_by_itself():
     assert seen3["found"] == 0 and "different" in seen3["hint"]
 
 
+def test_similar_records_when_no_exact_match():
+    client, _ = make_client()
+    tools = Tools(client)
+
+    def search(term):
+        return tools.run("search_records", {"term": term, "tables": None})
+
+    # Exact (ignoring capitals/spacing) still wins and is not labelled similar.
+    seen, att = search("chukwuemeka   OKAFOR")
+    assert seen["exact_matches"] >= 1 and "similar_matches" not in seen
+    assert not att.title.startswith("No exact match")
+
+    cases = {
+        "Chukwuemka Okafor": "Chukwuemeka Okafor",       # typo
+        "Okafor Chukwuemeka": "Chukwuemeka Okafor",      # reversed order
+        "Fatima Abubakar": "Fatimah Abubakar Sadiq",     # spelling + missing name
+        "Oluwasegun Adeyemi": "Oluwaseun Adeyemi",       # similar name
+        "SPPG/0021": None,                               # exists: exact
+        "SPPG/0012X": None,
+    }
+    for term, expected in cases.items():
+        seen, att = search(term)
+        if expected is None:
+            continue
+        assert seen["exact_matches"] == 0, term
+        assert seen["similar_matches"] >= 1, term
+        assert att.title.startswith("No exact match"), term
+        first = att.tables[0].rows[0]
+        assert expected in first[0], (term, first)
+        assert first[1].endswith("%")
+        assert "do not say the person was found" in seen["note"]
+        assert expected not in json.dumps(seen)            # AI never sees the name
+
+    # Swapped digits in a matric number find the right student first.
+    seen, att = search("SPPG/0251")       # no such student; 0215 with digits swapped
+    assert seen["exact_matches"] == 0 and att.tables[0].rows[0][3] == "SPPG/0215"
+    # Nonsense finds nothing at all.
+    seen, att = search("Zzyzx Qwerty")
+    assert seen["similar_matches"] == 0 and att is None
+
+    # find_records with a name filter that matches nobody suggests similar records.
+    seen, att = tools.run("find_records", {
+        "table": "Student Profile/Biodata",
+        "filters": [{"field": "Name", "op": "equals", "value": "Fatima Abubakar"}],
+        "columns": None, "sort_by": None, "descending": None, "title": "x"})
+    assert seen["matching_records"] == 0 and seen["similar_records"] == 1
+    assert att.tables[0].rows[0][0] == "Fatimah Abubakar Sadiq"
+
+
 def test_counts_and_group_by():
     client, _ = make_client()
     fake = FakeOpenAI([
@@ -299,7 +348,7 @@ def test_search_and_errors_are_handled():
     assert reply.attachments[0].tables[0].rows[0][1] == "Name"
     outputs = [json.loads(i["output"]) for i in fake.sent[1]["input"]
                if i.get("type") == "function_call_output"]
-    assert outputs[0]["total_matches"] == 2   # student row + its ledger link
+    assert outputs[0]["exact_matches"] == 2   # student row + its ledger link
     assert "not found" in outputs[1]["error"]
     sent = json.dumps(fake.sent[1:])
     assert "Student Person007" not in sent and "SPPG/0007" not in sent

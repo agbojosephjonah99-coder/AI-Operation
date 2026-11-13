@@ -78,6 +78,13 @@ empty, the assistant searches every table in the base for related fields
 (e.g. a separate fees or payments table). It cross-checks them against the
 student table and says which table and field it used.
 
+If a name or matric number has no exact match, the assistant says so and
+shows **similar records** instead, with a similarity score. Similar means
+misspellings, names in a different order, a missing middle name, or a
+matric number with one wrong or swapped digit. Check these before relying
+on them. To make matching stricter or looser, change `SIMILAR_THRESHOLD`
+in `query.py`.
+
 Every list appears in full under the answer, with a filter box and a
 **Download CSV** button.
 

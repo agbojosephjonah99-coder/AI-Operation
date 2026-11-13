@@ -35,6 +35,8 @@ def make_students(n=250):
             fields["Missing Fields"] = flags
         students.append({"id": f"recS{i:04d}", "fields": fields})
     students[9]["fields"]["Matric_Number"] = students[8]["fields"]["Matric_Number"]  # duplicate
+    for index, name in enumerate(["Chukwuemeka Okafor", "Fatimah Abubakar Sadiq", "Oluwaseun Adeyemi"]):
+        students[index]["fields"]["Name"] = name
     return students
 
 

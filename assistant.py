@@ -32,12 +32,14 @@ import config
 import reports
 from airtable_client import AirtableError
 from privacy import MIN_SHARED_COUNT, MODEL, looks_personal
-from query import (OPERATORS, QueryError, apply_filters, as_text,
-                   group_counts, resolve_field, sort_rows)
+from query import (OPERATORS, SIMILAR_THRESHOLD, QueryError, apply_filters,
+                   as_text, group_counts, normalize_text, resolve_field,
+                   similarity, sort_rows)
 from results import Attachment, Table
 
 MAX_TOOL_ROUNDS = 16
 MAX_FIELD_MATCHES = 40
+MAX_SIMILAR = 25
 NUMBER_TYPES = {"number", "currency", "percent", "rating", "duration", "count", "autoNumber"}
 TYPE_NOTES = {
     "checkbox": "ticked = 'Yes', unticked = empty (use is_empty / is_not_empty)",
@@ -168,8 +170,11 @@ TOOLS = [
     ),
     _tool(
         "search_records",
-        "Search for text across all tables (or the listed ones) and show the "
-        "matching records to the user. You get back match counts per table.",
+        "Search for text (e.g. a student's name or matric number) across all "
+        "tables, or the listed ones, and show the matching records to the user. "
+        "If nothing matches exactly, records that are SIMILAR (typos, names in "
+        "another order, a missing middle name, one wrong digit) are shown "
+        "instead, labelled as similar. You get back counts only.",
         {
             "term": {"type": "string"},
             "tables": {"type": ["array", "null"], "items": {"type": "string"}},
@@ -249,6 +254,11 @@ HOW TO ANSWER
   earlier answer.
 - If a tool returns an error, fix the call (e.g. correct field name) and
   try again, or explain the problem.
+- To look up a person by name or matric number, use search_records.
+- When a tool reports similar_matches or similar_records, tell the user
+  plainly there was NO exact match for what they typed, and that similar
+  records (possible misspellings) are shown below for them to check. Never
+  present a similar record as the person they asked for.
 - Access is read-only; you cannot change Airtable.
 - Keep replies short and clear; state the counts the tools returned.
 """
@@ -545,6 +555,29 @@ class Tools:
                 name = resolve_field(names, f["field"])
                 if name not in shown:
                     shown.append(name)
+        similar_rows = []
+        if total == 0:
+            similar_rows = self._similar_for_filters(table, names, filters)
+            if similar_rows:
+                field, rows_scored = similar_rows
+                shown_sim = list(dict.fromkeys(shown + [field]))
+                body = [[as_text(r["fields"].get(shown_sim[0])), f"{min(99, round(sc * 100))}%"]
+                        + [as_text(r["fields"].get(c)) for c in shown_sim[1:]]
+                        for sc, r in rows_scored]
+                attachment = Attachment(
+                    f"No exact match — similar records ({table})",
+                    [f"Table: {table}", "Exact matches: 0", f"Similar records: {len(body)}"]
+                    + [f"Filter: {s}" for s in self._filter_summary(filters)],
+                    [Table(f"Similar {field} values", [shown_sim[0], "Similarity"] + shown_sim[1:], body,
+                           note="Not an exact match: check before relying on it.")],
+                )
+                return {
+                    "table": table, "filters": self._filter_summary(filters),
+                    "matching_records": 0, "similar_records": len(body),
+                    "note": ("No exact match. Similar records are displayed to the user. Say "
+                             "there was no exact match and that similar records are shown; do "
+                             "not say the person was found."),
+                }, attachment
         attachment = Attachment(
             title or f"Records from {table}",
             [f"Table: {table}", f"Matching records: {total}"]
@@ -562,39 +595,107 @@ class Tools:
             "note": "The rows are displayed to the user under your reply. You cannot see them.",
         }, attachment
 
+    def _similar_for_filters(self, table, names, filters):
+        """For a 0-result list: records whose text is close to an equals/contains filter value."""
+        for f in filters or []:
+            if f.get("op") not in ("equals", "contains") or not f.get("value"):
+                continue
+            field = resolve_field(names, f["field"])
+            others = [o for o in filters if o is not f]
+            rows = apply_filters(self.client.records(table), others, names)
+            scored = []
+            for row in rows:
+                value = row["fields"].get(field)
+                items = value if isinstance(value, list) else [value]
+                score = max((similarity(f["value"], as_text(i)) for i in items if i), default=0)
+                if score >= SIMILAR_THRESHOLD:
+                    scored.append((score, row))
+            scored.sort(key=lambda x: -x[0])
+            if scored:
+                return field, scored[:MAX_SIMILAR]
+        return None
+
     def _search_records(self, term, tables=None):
-        term_clean = (term or "").strip().lower()
-        if not term_clean:
+        term = (term or "").strip()
+        wanted = normalize_text(term)
+        if not wanted:
             return {"error": "Give a search term."}, None
         targets = [self._table(t) for t in tables] if tables else [t["name"] for t in self.client.tables()]
-        sections, counts, scanned = [], {}, 0
+
+        def label(row, ident):
+            return " / ".join(as_text(row["fields"].get(f)) or "—" for f in ident)
+
+        def snippet(text):
+            return text if len(text) <= 200 else text[:200] + "…"
+
+        # 1. Exact matches (ignoring capitals, spacing and punctuation).
+        sections, counts, scanned, loaded = [], {}, 0, []
         for table in targets:
             rows = self.client.records(table)
-            scanned += len(rows)
             ident = reports._identity_fields(self.client, table)
+            loaded.append((table, rows, ident))
+            scanned += len(rows)
             hits = []
             for row in rows:
                 for name, value in row["fields"].items():
                     text = as_text(value)
-                    if term_clean in text.lower():
-                        label = " / ".join(as_text(row["fields"].get(f)) or "—" for f in ident)
-                        snippet = text if len(text) <= 200 else text[:200] + "…"
-                        hits.append([label, name, snippet])
+                    if text and wanted in normalize_text(text):
+                        hits.append([label(row, ident), name, snippet(text)])
             if hits:
                 counts[table] = len(hits)
                 sections.append(Table(table, ["Record", "Found in", "Value"], hits))
+
+        base = {"tables_searched": len(targets), "records_scanned": scanned}
+        if sections:
+            attachment = Attachment(
+                f"Search: {term}",
+                [f"Tables searched: {len(targets)}", f"Records scanned: {scanned}",
+                 f"Exact matches: {sum(counts.values())}"],
+                sections,
+            )
+            return {**base, "exact_matches": sum(counts.values()), "matches_by_table": counts,
+                    "note": "Matches are displayed to the user. You cannot see them."}, attachment
+
+        # 2. Nothing exact: look for similar records, best match per record.
+        similar = []
+        for table, rows, ident in loaded:
+            for row in rows:
+                best = None
+                for name, value in row["fields"].items():
+                    text = as_text(value)
+                    if not text:
+                        continue
+                    score = similarity(term, text)
+                    if score >= SIMILAR_THRESHOLD and (best is None or score > best[0]):
+                        best = (score, name, text)
+                if best:
+                    similar.append((best[0], table, label(row, ident), best[1], best[2]))
+        similar.sort(key=lambda s: -s[0])
+        total_similar = len(similar)
+        similar = similar[:MAX_SIMILAR]
+        if not similar:
+            return {**base, "exact_matches": 0, "similar_matches": 0,
+                    "note": "No exact or similar matches."}, None
+
+        by_table = {}
+        for score, table, who, field, text in similar:
+            by_table.setdefault(table, []).append([who, f"{min(99, round(score * 100))}%", field, snippet(text)])
         attachment = Attachment(
-            f"Search: {term.strip()}",
+            f"No exact match for “{term}” — similar records",
             [f"Tables searched: {len(targets)}", f"Records scanned: {scanned}",
-             f"Matches: {sum(counts.values())}"],
-            sections,
-        ) if sections else None
+             "Exact matches: 0", f"Similar records: {total_similar}"]
+            + ([f"Showing the {MAX_SIMILAR} closest"] if total_similar > MAX_SIMILAR else []),
+            [Table(f"Similar in {table}", ["Record", "Similarity", "Similar field", "Value"], rows,
+                   note="Not an exact match: check before relying on it.")
+             for table, rows in by_table.items()],
+        )
         return {
-            "tables_searched": len(targets),
-            "records_scanned": scanned,
-            "matches_by_table": counts,
-            "total_matches": sum(counts.values()),
-            "note": "Matches are displayed to the user. You cannot see them." if sections else "No matches.",
+            **base, "exact_matches": 0, "similar_matches": total_similar,
+            "similar_by_table": {t: len(r) for t, r in by_table.items()},
+            "best_similarity": f"{min(99, round(similar[0][0] * 100))}%",
+            "note": ("No exact match. Similar records are displayed to the user. Say there "
+                     "was no exact match and that similar records are shown for them to "
+                     "check; do not say the person was found."),
         }, attachment
 
     def _run_report(self, report, table=None, field=None):
